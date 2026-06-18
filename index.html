@@ -534,7 +534,7 @@ h1,h2,h3{font-family:"Fraunces",serif}
       <div class="mode-icon">📍</div>
       <div class="mode-label">
         <div class="mode-title">Find activities nearby</div>
-        <div class="mode-sub">Use GPS or a photo to find the right activities</div>
+        <div class="mode-sub">Use GPS or type an address to find the right activities</div>
       </div>
     </button>
     <button class="mode-btn mode-btn-learn" onclick="goTo('s-learn-loc')">
@@ -728,7 +728,7 @@ h1,h2,h3{font-family:"Fraunces",serif}
 
   <!-- GPS error -->
   <div class="photo-offline" id="gps-error" style="display:none">
-    <p>📵 <strong>Couldn't detect your location.</strong> Please choose manually below or use the photo option.</p>
+    <p>📵 <strong>Couldn't detect your location.</strong> Please choose manually below, or type an address.</p>
     <div class="loc-grid" id="gps-error-loc-grid" style="padding:8px 0 0;display:grid"></div>
   </div>
 
@@ -739,36 +739,45 @@ h1,h2,h3{font-family:"Fraunces",serif}
     <div style="flex:1;height:1px;background:var(--border)"></div>
   </div>
 
-  <!-- Photo backup -->
-  <div style="padding:14px 20px 0">
-    <div class="photo-zone" id="photo-upload-zone" style="padding:20px">
-      <input type="file" accept="image/*" capture="environment" id="photo-input" onchange="handlePhotoSelected(event)">
-      <span class="photo-zone-icon" style="font-size:32px">📷</span>
-      <div class="photo-zone-title" style="font-size:14px">Take or upload a photo instead</div>
-      <div class="photo-zone-sub">We'll identify your location from the image</div>
-      <img class="photo-preview-img" id="photo-preview" alt="Preview">
+  <!-- Address entry -->
+  <div style="padding:16px 20px 0">
+    <div class="sec-lbl-sm" style="margin-bottom:8px">⌨️ Type an address or place</div>
+    <div class="search-box" style="margin:0">
+      <span class="search-ico">📍</span>
+      <input type="text" id="addr-input" class="search-inp"
+        placeholder="e.g. 123 Main St, or a place name"
+        onkeydown="if(event.key==='Enter')lookupAddress()"
+        autocomplete="off" autocorrect="off" spellcheck="false">
+      <button class="search-clr" id="addr-clear" onclick="clearAddress()" style="display:none">×</button>
     </div>
-    <button class="photo-analyse-btn" id="photo-analyse-btn" onclick="analysePhoto()" style="margin:10px 0 0">
-      🔍 Find activities from photo
+    <button class="gps-btn" id="addr-btn" onclick="lookupAddress()" style="margin:10px 0 0">
+      <span class="gps-btn-icon">🔎</span>
+      <div class="gps-btn-body">
+        <div class="gps-btn-title">Find activities here</div>
+        <div class="gps-btn-sub">We'll look up the address and match a place type</div>
+      </div>
+      <span class="gps-btn-arrow">→</span>
     </button>
   </div>
 
-  <div class="photo-loading" id="photo-loading" style="display:none">
+  <!-- Address loading -->
+  <div class="gps-loading" id="addr-loading" style="display:none">
     <div class="photo-spinner"></div>
-    <p style="font-size:14px;color:var(--txt-mid);line-height:1.6">Analysing photo…<br>Finding the best activities 💛</p>
+    <p style="font-size:14px;color:var(--txt-mid);line-height:1.6">Looking up that address…</p>
   </div>
 
-  <div class="photo-result" id="photo-result" style="padding:0 20px">
-    <div class="sec-lbl-sm">📍 Detected location</div>
-    <div class="photo-loc-badge" id="photo-loc-badge"></div>
-    <div class="sec-lbl-sm">🎯 Suggested activities</div>
-    <div id="photo-act-cards"></div>
-    <button onclick="goTo('s-learn-loc')" style="background:none;border:none;font-size:13px;font-weight:600;color:var(--teal-mid);cursor:pointer;padding:8px 0;font-family:'DM Sans',sans-serif">Not right? Browse all locations →</button>
+  <!-- Address result — confirm/adjust -->
+  <div id="addr-result" style="display:none;padding:16px 20px 0">
+    <div class="sec-lbl-sm" style="margin-bottom:10px">📍 This looks like</div>
+    <div class="gps-detected-card" id="addr-detected-card"></div>
+    <div class="sec-lbl-sm" style="margin:14px 0 8px">Not right? Choose your location</div>
+    <div class="loc-grid" id="addr-loc-grid" style="padding:0"></div>
   </div>
 
-  <div class="photo-offline" id="photo-offline" style="display:none">
-    <p>📵 <strong>Photo analysis needs internet.</strong> Use GPS above or browse manually.</p>
-    <button onclick="goTo('s-learn-loc')">Browse activities →</button>
+  <!-- Address error -->
+  <div class="photo-offline" id="addr-error" style="display:none">
+    <p>🤔 <strong>Couldn't find that address.</strong> Please check the spelling or choose a location below.</p>
+    <div class="loc-grid" id="addr-error-loc-grid" style="padding:8px 0 0;display:grid"></div>
   </div>
 
   <div style="height:40px"></div>
@@ -3167,45 +3176,41 @@ function detectLocation() {
   );
 }
 
-async function matchLocationToPlace(lat, lng) {
-  // Try to use reverse geocoding to identify place type
-  // Uses the free browser geolocation + a simple heuristic approach
-  // For production, use Google Places API Nearby Search
+// Shared: map a Nominatim response object to one of our LOCS, or null.
+function matchNominatimToLoc(data) {
+  const type = (data.type || '').toLowerCase();
+  const category = (data.category || '').toLowerCase();
+  const displayName = (data.display_name || '').toLowerCase();
+  const addressType = (data.addresstype || '').toLowerCase();
+  const cls = (data.class || '').toLowerCase();
 
+  const hay = [type, category, displayName, addressType, cls];
+  const has = (keys) => keys.some(k => hay.some(h => h.includes(k)));
+
+  if (has(['supermarket','grocery','convenience'])) return LOCS.find(l => l.id === 'supermarket');
+  if (has(['mall','department_store','shopping'])) return LOCS.find(l => l.id === 'mall');
+  if (has(['playground'])) return LOCS.find(l => l.id === 'playground');
+  if (has(['park','garden','recreation_ground','recreation'])) return LOCS.find(l => l.id === 'park');
+  if (has(['restaurant','cafe','fast_food','food','bar','pub'])) return LOCS.find(l => l.id === 'restaurant');
+  if (has(['library'])) return LOCS.find(l => l.id === 'library');
+  if (has(['post_office','post office'])) return LOCS.find(l => l.id === 'postoffice');
+  if (has(['school','college','university','kindergarten'])) return LOCS.find(l => l.id === 'school');
+  if (has(['residential','house','flat','apartment','home','detached','terrace'])) return LOCS.find(l => l.id === 'home');
+  return null;
+}
+
+async function matchLocationToPlace(lat, lng) {
+  // Reverse geocode via OpenStreetMap Nominatim (free, no API key needed).
+  // For production scale, consider Google Places Nearby Search.
   let matchedLoc = null;
 
   try {
-    // Try OpenStreetMap Nominatim (free, no API key needed)
     const resp = await fetch(
       `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&zoom=18`,
       { headers: { 'Accept-Language': 'en' } }
     );
     const data = await resp.json();
-
-    const type = (data.type || '').toLowerCase();
-    const category = (data.category || '').toLowerCase();
-    const displayName = (data.display_name || '').toLowerCase();
-    const addressType = (data.addresstype || '').toLowerCase();
-
-    // Match to our location types
-    if (['supermarket','grocery','convenience'].some(k => type.includes(k) || displayName.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'supermarket');
-    } else if (['mall','shopping'].some(k => type.includes(k) || displayName.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'mall');
-    } else if (['park','garden','recreation','playground'].some(k => type.includes(k) || displayName.includes(k) || category.includes(k))) {
-      matchedLoc = type.includes('playground') ? LOCS.find(l => l.id === 'playground') : LOCS.find(l => l.id === 'park');
-    } else if (['restaurant','cafe','food','bar','pub'].some(k => category.includes(k) || type.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'restaurant');
-    } else if (['library'].some(k => type.includes(k) || displayName.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'library');
-    } else if (['post_office','post office'].some(k => type.includes(k) || displayName.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'post_office');
-    } else if (['school','college','university'].some(k => type.includes(k) || displayName.includes(k) || category.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'school');
-    } else if (['residential','house','flat','apartment','home'].some(k => type.includes(k) || addressType.includes(k))) {
-      matchedLoc = LOCS.find(l => l.id === 'home');
-    }
-
+    matchedLoc = matchNominatimToLoc(data);
   } catch(err) {
     console.log('Nominatim error:', err);
     // Fall through to manual selection
@@ -3290,177 +3295,145 @@ function resetGpsScreen() {
   document.getElementById('gps-loading').style.display = 'none';
   document.getElementById('gps-result').style.display = 'none';
   document.getElementById('gps-error').style.display = 'none';
-  // Also reset photo
-  resetPhotoScreen();
+  // Also reset address lookup
+  resetAddressScreen();
 }
 
-// ── PHOTO MODE ───────────────────────────────────────────────────
-let photoBase64 = null;
-
-function handlePhotoSelected(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const dataUrl = e.target.result;
-    photoBase64 = dataUrl.split(',')[1]; // strip data:image/...;base64,
-
-    // Show preview
-    const preview = document.getElementById('photo-preview');
-    preview.src = dataUrl;
-    preview.style.display = 'block';
-
-    // Show analyse button
-    document.getElementById('photo-analyse-btn').style.display = 'block';
-
-    // Hide previous results
-    document.getElementById('photo-result').style.display = 'none';
-    document.getElementById('photo-loading').style.display = 'none';
-    document.getElementById('photo-offline').style.display = 'none';
-  };
-  reader.readAsDataURL(file);
+// ── ADDRESS LOOKUP ───────────────────────────────────────────────
+function clearAddress() {
+  const inp = document.getElementById('addr-input');
+  inp.value = '';
+  document.getElementById('addr-clear').style.display = 'none';
+  inp.focus();
 }
 
-async function analysePhoto() {
-  // Check connectivity
+function resetAddressScreen() {
+  const inp = document.getElementById('addr-input');
+  if (inp) inp.value = '';
+  ['addr-clear','addr-loading','addr-result','addr-error'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  const btn = document.getElementById('addr-btn');
+  if (btn) btn.style.display = 'flex';
+}
+
+async function lookupAddress() {
+  const inp = document.getElementById('addr-input');
+  const q = inp.value.trim();
+  document.getElementById('addr-clear').style.display = q ? 'block' : 'none';
+  if (!q) { inp.focus(); return; }
+
   if (!navigator.onLine) {
-    document.getElementById('photo-offline').style.display = 'block';
+    showAddrError('You appear to be offline. Please choose a location below.');
     return;
   }
 
-  if (!photoBase64) return;
-
-  // Show loading
-  document.getElementById('photo-analyse-btn').style.display = 'none';
-  document.getElementById('photo-loading').style.display = 'block';
-  document.getElementById('photo-result').style.display = 'none';
-
-  // Build list of valid location+activity IDs for Claude to choose from
-  const validLocs = LOCS.map(l => l.name).join(', ');
-  const actsByLoc = Object.entries(ACTS).map(([locId, acts]) => {
-    const loc = LOCS.find(l=>l.id===locId);
-    return `${loc ? loc.name : locId}: ${acts.map(a=>a.name).join(', ')}`;
-  }).join('\n');
-
-  const prompt = `You are helping parents of children with autism find relevant intervention activities based on where they are right now.
-
-Look at this photo carefully. Identify:
-1. The most likely location from this list: ${validLocs}
-2. The 2-3 most relevant activities for a child with autism in that location right now
-
-Here are the activities available per location:
-${actsByLoc}
-
-Respond ONLY with a JSON object like this (no markdown, no extra text):
-{
-  "location": "Supermarket",
-  "location_id": "supermarket",
-  "reason": "I can see supermarket shelves and shopping trolleys",
-  "activities": [
-    {"name": "Moving through aisles", "id": "shopping", "reason": "The child is likely moving through the shop"},
-    {"name": "Waiting at checkout", "id": "checkout", "reason": "Checkout areas are common challenge spots"},
-    {"name": "Walking in", "id": "entering", "reason": "If you've just arrived, the entry can be overwhelming"}
-  ]
-}
-
-Only use location_id and activity id values from the lists above. If you cannot identify the location clearly, use "home" as a safe default.`;
+  // Loading state
+  document.getElementById('addr-btn').style.display = 'none';
+  document.getElementById('addr-loading').style.display = 'block';
+  document.getElementById('addr-result').style.display = 'none';
+  document.getElementById('addr-error').style.display = 'none';
 
   try {
-    const response = await fetch('/api/analyse-photo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        imageBase64: photoBase64,
-        mediaType: 'image/jpeg',
-        prompt: prompt,
-      })
-    });
+    // Forward geocode via Nominatim. extratags/addressdetails help classification.
+    const resp = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&addressdetails=1&extratags=1&limit=1`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    const arr = await resp.json();
 
-    if (!response.ok) throw new Error('Server error: ' + response.status);
-    const data = await response.json();
-    const text = data.result || '';
+    document.getElementById('addr-loading').style.display = 'none';
 
-    // Parse JSON response
-    const clean = text.replace(/```json|```/g, '').trim();
-    const result = JSON.parse(clean);
+    if (!arr || !arr.length) {
+      showAddrError('Please check the spelling or choose a location below.');
+      return;
+    }
 
-    showPhotoResult(result);
+    const place = arr[0];
+    // Normalise to the shape matchNominatimToLoc expects.
+    const data = {
+      type: place.type,
+      class: place.class,
+      category: place.class,
+      addresstype: place.addresstype,
+      display_name: place.display_name,
+    };
+    const matched = matchNominatimToLoc(data);
+    showAddrResult(matched, place.display_name);
 
   } catch (err) {
-    console.error('Photo analysis error:', err);
-    // Show friendly error
-    document.getElementById('photo-loading').style.display = 'none';
-    document.getElementById('photo-offline').style.display = 'block';
-    document.getElementById('photo-offline').querySelector('p').innerHTML =
-      '😕 <strong>Something went wrong.</strong> We couldn\'t analyse the photo. You can still browse activities manually.';
+    console.error('Address lookup error:', err);
+    document.getElementById('addr-loading').style.display = 'none';
+    showAddrError('Something went wrong. Please choose a location below.');
   }
 }
 
-function showPhotoResult(result) {
-  document.getElementById('photo-loading').style.display = 'none';
+function showAddrResult(detectedLoc, displayName) {
+  const resultEl = document.getElementById('addr-result');
+  const detectedCard = document.getElementById('addr-detected-card');
+  resultEl.style.display = 'block';
 
-  // Find the matching location object
-  const loc = LOCS.find(l => l.id === result.location_id) ||
-               LOCS.find(l => l.name.toLowerCase() === result.location?.toLowerCase()) ||
-               LOCS[0];
+  // Remove any confirm button left from a previous lookup
+  const oldBtn = resultEl.querySelector('.gps-confirm-btn');
+  if (oldBtn) oldBtn.remove();
 
-  // Location badge
-  const badge = document.getElementById('photo-loc-badge');
-  badge.innerHTML = `<span style="font-size:20px">${loc.emoji}</span><span>${result.location}</span>`;
-  badge.style.borderColor = 'rgba(15,110,86,0.25)';
-  badge.style.background = 'var(--teal-lt)';
-  badge.querySelector('span:last-child').style.color = 'var(--teal)';
+  const shortName = (displayName || '').split(',').slice(0, 2).join(', ');
 
-  // Activity cards
-  const cardsContainer = document.getElementById('photo-act-cards');
-  cardsContainer.innerHTML = '';
+  if (detectedLoc) {
+    detectedCard.innerHTML = `
+      <div class="gps-detected-emoji">${detectedLoc.emoji}</div>
+      <div>
+        <div class="gps-detected-name">${detectedLoc.name}</div>
+        <div class="gps-detected-sub">${shortName || 'Tap to confirm, or choose another below'}</div>
+      </div>`;
 
-  (result.activities || []).forEach(act => {
-    // Find the full activity object
-    const locActs = ACTS[loc.id] || [];
-    const fullAct = locActs.find(a => a.id === act.id) ||
-                    locActs.find(a => a.name.toLowerCase() === act.name?.toLowerCase()) ||
-                    { id: act.id, name: act.name, emoji: '🎯', sub: '' };
-
-    const card = document.createElement('div');
-    card.className = 'photo-act-card';
-    card.innerHTML = `
-      <div class="photo-act-emoji">${fullAct.emoji || '🎯'}</div>
-      <div style="flex:1">
-        <div class="photo-act-name">${fullAct.name || act.name}</div>
-        <div class="photo-act-reason">${act.reason || ''}</div>
-      </div>
-      <span style="color:var(--lt);font-size:16px;flex-shrink:0">›</span>`;
-
-    card.onclick = () => {
-      // Go to learn mode with this loc + act pre-selected
-      S.learn_loc = loc;
-      S.learn_act = fullAct;
-      S.learn_level = null;
-      S.learn_sit = null;
-      pickLearnLoc(loc);
-      // Small delay then pick the activity
-      setTimeout(() => pickLearnAct(fullAct), 50);
+    const confirmBtn = document.createElement('button');
+    confirmBtn.className = 'gps-confirm-btn';
+    confirmBtn.textContent = `✓ Yes, this is a ${detectedLoc.name}`;
+    confirmBtn.onclick = () => {
+      S.learn_loc = detectedLoc;
+      pickLearnLoc(detectedLoc);
     };
+    detectedCard.parentNode.insertBefore(confirmBtn, detectedCard.nextSibling);
+  } else {
+    detectedCard.innerHTML = `
+      <div class="gps-detected-emoji">🤔</div>
+      <div>
+        <div class="gps-detected-name" style="font-size:15px">Found, but couldn't match a place type</div>
+        <div class="gps-detected-sub">${shortName ? shortName + ' — choose below' : 'Please choose your location below'}</div>
+      </div>`;
+  }
 
-    cardsContainer.appendChild(card);
+  // Always show full grid for adjustment
+  const grid = document.getElementById('addr-loc-grid');
+  grid.innerHTML = '';
+  LOCS.forEach(l => {
+    const b = document.createElement('button');
+    b.className = 'loc-card';
+    b.style.background = l === detectedLoc ? 'var(--teal-lt)' : 'var(--bg-card)';
+    b.style.border = l === detectedLoc ? '2px solid var(--teal-mid)' : '1.5px solid var(--border)';
+    b.innerHTML = `<span class="loc-card-emoji">${l.emoji}</span><span class="loc-card-name">${l.name}</span>`;
+    b.onclick = () => { S.learn_loc = l; pickLearnLoc(l); };
+    grid.appendChild(b);
   });
-
-  document.getElementById('photo-result').style.display = 'block';
-  document.getElementById('photo-analyse-btn').style.display = 'block';
 }
 
-// Reset photo screen when navigating away and back
-function resetPhotoScreen() {
-  photoBase64 = null;
-  document.getElementById('photo-preview').style.display = 'none';
-  document.getElementById('photo-preview').src = '';
-  document.getElementById('photo-analyse-btn').style.display = 'none';
-  document.getElementById('photo-loading').style.display = 'none';
-  document.getElementById('photo-result').style.display = 'none';
-  document.getElementById('photo-offline').style.display = 'none';
-  document.getElementById('photo-input').value = '';
+function showAddrError(msg) {
+  document.getElementById('addr-btn').style.display = 'flex';
+  const errEl = document.getElementById('addr-error');
+  errEl.style.display = 'block';
+  errEl.querySelector('p').innerHTML = `🤔 <strong>Couldn't find that address.</strong> ${msg}`;
+
+  const grid = document.getElementById('addr-error-loc-grid');
+  grid.innerHTML = '';
+  LOCS.forEach(l => {
+    const b = document.createElement('button');
+    b.className = 'loc-card';
+    b.innerHTML = `<span class="loc-card-emoji">${l.emoji}</span><span class="loc-card-name">${l.name}</span>`;
+    b.onclick = () => { S.learn_loc = l; pickLearnLoc(l); };
+    grid.appendChild(b);
+  });
 }
 
 // ── RECENT ACTIVITIES ────────────────────────────────────────────
@@ -3998,7 +3971,7 @@ function clearSearch() {
 
 // Focus search input when screen opens
 function goTo(id) {
-  // Reset photo screen if navigating away from it
+  // Reset location screen if navigating away from it
   if (document.getElementById('s-photo')?.classList.contains('active') && id !== 's-photo') {
     resetGpsScreen();
   }
